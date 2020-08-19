@@ -22,8 +22,10 @@ go run ./main.go \
     --commit-analyzed-logs 0-2       # commit of Synthetics (range)
 ```
 
+![](https://i.imgur.com/H5erEwQ.png)
+
 ## TODO
 
-* exclude if commit count is 0.
+* exclude if commit is 0.
 * calculate Annual Plan. Currently M2M Plan only.
 * test !!
