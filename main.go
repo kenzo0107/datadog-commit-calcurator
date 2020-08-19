@@ -10,46 +10,74 @@ import (
 	"strings"
 	"time"
 
-	. "github.com/logrusorgru/aurora"
+	"github.com/logrusorgru/aurora"
 
 	flag "github.com/spf13/pflag"
 )
 
 var (
-	fpath            string
-	commitAgentHost  string
-	commitAPMHost    string
-	commitLogs       string
-	commitSynthetics string
-	preStartDate     string
-	startDate        string // 2020-06-01
-	endDate          string // 2020-06-30
+	fpath                string
+	commitAgentHost      string
+	commitAPMHost        string
+	commitIndexedLogs    string
+	commitSynthetics     string
+	commitFargateTask    string
+	commitLambdaFunction string
+	commitAnalyzedLogs   string
 
-	rangeCommitAgentHost  []float64
-	rangeCommitAPMHost    []float64
-	rangeCommitLogs       []float64
-	rangeCommitSynthetics []float64
+	preStartDate string
+	startDate    string // 2020-06-01
+	endDate      string // 2020-06-30
+
+	rangeCommitAgentHost      []float64
+	rangeCommitAPMHost        []float64
+	rangeCommitIndexedLogs    []float64
+	rangeCommitSynthetics     []float64
+	rangeCommitFargateTask    []float64
+	rangeCommitLambdaFunction []float64
+	rangeCommitAnalyzedLogs   []float64
+)
+
+// plan: M2M
+const (
+	m2mPriceOfAgentHostOnDemand float64 = 18   // the on-demand price of Agent Host
+	m2mPriceOfAgentHostHourly   float64 = 0.03 // Hourly price of exceeding the number of commits about Agent Host
+
+	m2mPriceOfAPMHostOnDemand float64 = 36   // the on-demand price of 1 APM Host
+	m2mPriceOfAPMHostHourly   float64 = 0.06 // Hourly price of exceeding the number of commits about APM Host
+
+	// m2mPriceContainer float64 = 0.0 // the price of Containers
+	// m2mPriceOfCustomMetrics float64 = 0.05 // the pfice of custom metrics
+
+	m2mPriceOfIndexedLogs15dOnDemand float64 = 2.04 // the on-demand price of indexed Logs[15d] per 1M
+	m2mPriceOfIndexedLogs15dPer1GB   float64 = 0.1  // the price of indexed Logs[15d] per 1GB after exceeding the number of commits
+
+	m2mPriceOfAnalyzedLogsPerGB       float64 = 0.24
+	m2mPriceOfAnalyzedLogsPerGBHourly float64 = 0.30
+
+	m2mPriceOfSyntheticsPer10K        float64 = 6.00 // the price of Synthetics Per 10K
+	m2mPriceOfSyntheticsAPITestPer10K float64 = 7.2  // the price of Synthetics API Test Per 10K
+
+	m2mPriceOfFargateTaskInfra       float64 = 1.2 // the price of Fargate Task Infra
+	m2mPriceOfFargateTaskInfraHourly float64 = 1.4 // Hourly price of exceeding the number of commits of Fargate Task Infra
+
+	m2mPriceOfLambdaFunctionOnDemand float64 = 6.00 // the on-demand price of lambda function
+	m2mPriceOfLambdaFunctionHourly   float64 = 7.2  // the excess price of lambda function
 )
 
 var (
-	pricePerAgentHostHourly  float64 = 0.03
-	pricePerAgentHostMonthly float64 = 18
-
-	pricePerAPMHostHourly  float64 = 0.06
-	pricePerAPMHostMonthly float64 = 36
-
-	pricePerLogs15dPer1GB  float64 = 0.1
-	pricePerLogs15dMonthly float64 = 2.04
-
-	pricePerSyntheticsPer10K        float64 = 6.00
-	pricePerSyntheticsAPITestPer10K float64 = 7.2
+	au     aurora.Aurora
+	colors = flag.Bool("colors", true, "enable or disable colors")
 )
 
 func init() {
-	flag.StringVarP(&commitAgentHost, "commits-agenthost", "", "", "count of commit for agent host")
+	flag.StringVarP(&commitAgentHost, "commit-agenthost", "", "", "count of commit for agent host")
 	flag.StringVarP(&commitAPMHost, "commit-apmhost", "", "", "count of commit for apm host")
-	flag.StringVarP(&commitLogs, "commit-logs", "", "", "count of commit for apm host")
-	flag.StringVarP(&commitSynthetics, "commit-synthetics", "", "", "count of commit for apm host")
+	flag.StringVarP(&commitIndexedLogs, "commit-logs", "", "", "count of commit for indexed logs")
+	flag.StringVarP(&commitSynthetics, "commit-synthetics", "", "", "count of commit for synthetics api")
+	flag.StringVarP(&commitFargateTask, "commit-fargate-task", "", "", "count of commit for fargate tasks")
+	flag.StringVarP(&commitLambdaFunction, "commit-lambda-function", "", "", "count of commit for lambda function")
+	flag.StringVarP(&commitAnalyzedLogs, "commit-analyzed-logs", "", "", "count of commit for analyzed logs")
 	flag.StringVarP(&fpath, "csv", "f", "", "csv file")
 	flag.StringVarP(&startDate, "start_date", "s", "", "yyyy-mm-dd")
 	flag.StringVarP(&endDate, "end_date", "e", "", "yyyy-mm-dd")
@@ -65,8 +93,13 @@ func init() {
 
 	rangeCommitAgentHost = getRange(commitAgentHost)
 	rangeCommitAPMHost = getRange(commitAPMHost)
-	rangeCommitLogs = getRange(commitLogs)
+	rangeCommitIndexedLogs = getRange(commitIndexedLogs)
+	rangeCommitAnalyzedLogs = getRange(commitAnalyzedLogs)
 	rangeCommitSynthetics = getRange(commitSynthetics)
+	rangeCommitFargateTask = getRange(commitFargateTask)
+	rangeCommitLambdaFunction = getRange(commitLambdaFunction)
+
+	au = aurora.NewAurora(*colors)
 }
 
 func main() {
@@ -92,7 +125,10 @@ func handler() error {
 
 	totalExcessHoursAgentHost := make([]float64, len(rangeCommitAgentHost))
 	totalExcessHoursAPMHost := make([]float64, len(rangeCommitAPMHost))
-	totalExcessLogs := make([]float64, len(rangeCommitLogs))
+	totalExcessLogs := make([]float64, len(rangeCommitIndexedLogs))
+	totalExcessAnalyzedLogs := make([]float64, len(rangeCommitAnalyzedLogs))
+	totalExcessFargateTask := make([]float64, len(rangeCommitFargateTask))
+	totalExcessLambdaFunction := make([]float64, len(rangeCommitLambdaFunction))
 	var totalSyntheticsAPIRuns float64 = 0
 
 	readable := false
@@ -104,6 +140,7 @@ func handler() error {
 
 		if strings.HasPrefix(record[1], preStartDate) {
 			readable = false
+			break
 		}
 
 		if !readable {
@@ -125,9 +162,30 @@ func handler() error {
 		}
 
 		logsPer1M, _ := strconv.ParseFloat(record[11], 64)
-		for i, commit := range rangeCommitLogs {
+		for i, commit := range rangeCommitIndexedLogs {
 			if c := logsPer1M/1_000_000 - commit; c > 0 {
 				totalExcessLogs[i] += c
+			}
+		}
+
+		analyzedLogs, _ := strconv.ParseFloat(record[22], 64)
+		for i, commit := range rangeCommitAnalyzedLogs {
+			if c := analyzedLogs/1_000_000_000 - commit; c > 0 {
+				totalExcessAnalyzedLogs[i] += c
+			}
+		}
+
+		fargateTask, _ := strconv.ParseFloat(record[15], 64)
+		for i, commit := range rangeCommitFargateTask {
+			if c := fargateTask - commit; c > 0 {
+				totalExcessFargateTask[i] += c
+			}
+		}
+
+		lambdaFunction, _ := strconv.ParseFloat(record[16], 64)
+		for i, commit := range rangeCommitLambdaFunction {
+			if c := lambdaFunction - commit; c > 0 {
+				totalExcessLambdaFunction[i] += c
 			}
 		}
 
@@ -135,11 +193,12 @@ func handler() error {
 		totalSyntheticsAPIRuns += syntheticsAPIRunPer10K
 	}
 
+	// AgentHost --- start ---
 	totalPriceAgentHost := make([]float64, len(rangeCommitAgentHost))
 	for i, commit := range rangeCommitAgentHost {
-		priceInCommitAgentHost := pricePerAgentHostMonthly * commit
-		priceExcessAgentHost := pricePerAgentHostHourly * totalExcessHoursAgentHost[i]
-		totalPriceAgentHost[i] = priceInCommitAgentHost + priceExcessAgentHost
+		priceInCommit := m2mPriceOfAgentHostOnDemand * commit
+		priceExcess := m2mPriceOfAgentHostHourly * totalExcessHoursAgentHost[i]
+		totalPriceAgentHost[i] = priceInCommit + priceExcess
 	}
 	minIndex, _ := min(totalPriceAgentHost)
 
@@ -147,17 +206,19 @@ func handler() error {
 	for i, commit := range rangeCommitAgentHost {
 		d := fmt.Sprintf("%v,%v", commit, totalPriceAgentHost[i])
 		if i == minIndex {
-			fmt.Println(Green(d))
+			fmt.Println(au.Green(d))
 		} else {
 			fmt.Println(d)
 		}
 	}
+	// AgentHost --- end ---
 
+	// APMHost --- start ---
 	totalPriceAPMHost := make([]float64, len(rangeCommitAPMHost))
 	for i, commit := range rangeCommitAPMHost {
-		priceInCommitAPMHost := pricePerAPMHostMonthly * commit
-		priceExcessAPMHost := pricePerAPMHostHourly * totalExcessHoursAPMHost[i]
-		totalPriceAPMHost[i] = priceInCommitAPMHost + priceExcessAPMHost
+		priceInCommit := m2mPriceOfAPMHostOnDemand * commit
+		priceExcess := m2mPriceOfAPMHostHourly * totalExcessHoursAPMHost[i]
+		totalPriceAPMHost[i] = priceInCommit + priceExcess
 	}
 	minIndex, _ = min(totalPriceAPMHost)
 
@@ -165,38 +226,102 @@ func handler() error {
 	for i, commit := range rangeCommitAPMHost {
 		d := fmt.Sprintf("%v,%v", commit, totalPriceAPMHost[i])
 		if i == minIndex {
-			fmt.Println(Green(d))
+			fmt.Println(au.Green(d))
 		} else {
 			fmt.Println(d)
 		}
 	}
+	// APMHost --- end ---
 
-	totalPriceLogs := make([]float64, len(rangeCommitLogs))
-	for i, commit := range rangeCommitLogs {
-		priceInCommitLogs := pricePerLogs15dMonthly * commit
-		priceExcessLogs := pricePerLogs15dPer1GB * totalExcessLogs[i]
-		totalPriceLogs[i] = priceInCommitLogs + priceExcessLogs
+	// Logs --- start ---
+	totalPriceIndexedLogs := make([]float64, len(rangeCommitIndexedLogs))
+	for i, commit := range rangeCommitIndexedLogs {
+		priceInCommit := m2mPriceOfIndexedLogs15dOnDemand * commit
+		priceExcess := m2mPriceOfIndexedLogs15dPer1GB * totalExcessLogs[i]
+		totalPriceIndexedLogs[i] = priceInCommit + priceExcess
 	}
-	minIndex, _ = min(totalPriceLogs)
+	minIndex, _ = min(totalPriceIndexedLogs)
 
-	fmt.Println("\nQYT,Logs")
-	for i, commit := range rangeCommitLogs {
-		d := fmt.Sprintf("%v,%v", commit, totalPriceLogs[i])
+	fmt.Println("\nQYT,IndexedLogs")
+	for i, commit := range rangeCommitIndexedLogs {
+		d := fmt.Sprintf("%v,%v", commit, totalPriceIndexedLogs[i])
 		if i == minIndex {
-			fmt.Println(Green(d))
+			fmt.Println(au.Green(d))
 		} else {
 			fmt.Println(d)
 		}
 	}
+	// Logs --- end ---
 
+	// Analyzed Logs --- start ---
+	totalPriceAnalyzedLogs := make([]float64, len(rangeCommitAnalyzedLogs))
+	for i, commit := range rangeCommitAnalyzedLogs {
+		priceInCommit := m2mPriceOfAnalyzedLogsPerGB * commit
+		priceExcess := m2mPriceOfAnalyzedLogsPerGBHourly * totalExcessAnalyzedLogs[i]
+		totalPriceAnalyzedLogs[i] = priceInCommit + priceExcess
+	}
+	minIndex, _ = min(totalPriceAnalyzedLogs)
+
+	fmt.Println("\nQYT,AnalyzedLogs")
+	for i, commit := range rangeCommitAnalyzedLogs {
+		d := fmt.Sprintf("%v,%v", commit, totalPriceAnalyzedLogs[i])
+		if i == minIndex {
+			fmt.Println(au.Green(d))
+		} else {
+			fmt.Println(d)
+		}
+	}
+	// Analyzed Logs --- end ---
+
+	// Fargate Task --- start ---
+	totalPriceFargateTask := make([]float64, len(rangeCommitFargateTask))
+	for i, commit := range rangeCommitFargateTask {
+		priceInCommitFargateTask := m2mPriceOfFargateTaskInfra * commit
+		priceExcessFargateTask := m2mPriceOfFargateTaskInfraHourly * totalExcessFargateTask[i]
+		totalPriceFargateTask[i] = priceInCommitFargateTask + priceExcessFargateTask
+	}
+	minIndex, _ = min(totalPriceFargateTask)
+
+	fmt.Println("\nQYT,Fargate Task")
+	for i, commit := range rangeCommitFargateTask {
+		d := fmt.Sprintf("%v,%v", commit, totalPriceFargateTask[i])
+		if i == minIndex {
+			fmt.Println(au.Green(d))
+		} else {
+			fmt.Println(d)
+		}
+	}
+	// Fargate Task --- end ---
+
+	// Lambda Function --- start ---
+	totalPriceLambdaFunction := make([]float64, len(rangeCommitLambdaFunction))
+	for i, commit := range rangeCommitLambdaFunction {
+		priceIncommit := m2mPriceOfLambdaFunctionOnDemand * commit
+		excess := m2mPriceOfLambdaFunctionHourly * totalExcessLambdaFunction[i]
+		totalPriceLambdaFunction[i] = priceIncommit + excess
+	}
+	minIndex, _ = min(totalPriceLambdaFunction)
+
+	fmt.Println("\nQYT,LambdaFunction")
+	for i, commit := range rangeCommitLambdaFunction {
+		d := fmt.Sprintf("%v,%v", commit, totalPriceLambdaFunction[i])
+		if i == minIndex {
+			fmt.Println(au.Green(d))
+		} else {
+			fmt.Println(d)
+		}
+	}
+	// Lambda Function --- end ---
+
+	// Synthetics --- start ---
 	totalSynthetics := make([]float64, len(rangeCommitSynthetics))
 	for i, commit := range rangeCommitSynthetics {
 		var totalExcessSynthetics float64 = 0
 		if c := totalSyntheticsAPIRuns/10_000 - commit; c > 0 {
 			totalExcessSynthetics = c
 		}
-		priceInCommitSynthetics := pricePerSyntheticsPer10K * commit
-		priceExcessSynthetics := pricePerSyntheticsAPITestPer10K * totalExcessSynthetics
+		priceInCommitSynthetics := m2mPriceOfSyntheticsPer10K * commit
+		priceExcessSynthetics := m2mPriceOfSyntheticsAPITestPer10K * totalExcessSynthetics
 		totalSynthetics[i] = priceInCommitSynthetics + priceExcessSynthetics
 	}
 	minIndex, _ = min(totalSynthetics)
@@ -204,15 +329,12 @@ func handler() error {
 	for i, commit := range rangeCommitSynthetics {
 		d := fmt.Sprintf("%v,%v", commit, totalSynthetics[i])
 		if i == minIndex {
-			fmt.Println(Green(d))
+			fmt.Println(au.Green(d))
 		} else {
 			fmt.Println(d)
 		}
 	}
-	// priceInCommitSynthetics := pricePerSyntheticsPer10K * commitSynthetics
-	// priceExcessSynthetics := pricePerSyntheticsAPITestPer10K * totalExcessSynthetics
-	// totalSynthetics := priceInCommitSynthetics + priceExcessSynthetics
-	// fmt.Printf("* Synthetics: %v = %v + %v (excess: %v)\n", totalSynthetics, priceInCommitSynthetics, priceExcessSynthetics, totalExcessSynthetics)
+	// Synthetics --- end ---
 
 	return nil
 }
