@@ -24,7 +24,16 @@ go run ./main.go \
 
 ![](https://i.imgur.com/H5erEwQ.png)
 
-## サンプル
+or
+
+```
+go run ./main.go -p -r --csv ~/Downloads/hourly_usage_extract_2020-07-27.csv
+```
+
+* `-r` set recommended commetment range
+* `-p` predict as all of month even if in the middle of the month
+
+## Example
 
 2020-09-23 に 1年分の使用状況 (Usage) CSV をダウンロードし読み取り計算する。
 

@@ -4,7 +4,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io/ioutil"
-	"log"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/logrusorgru/aurora"
+	log "github.com/sirupsen/logrus"
 
 	flag "github.com/spf13/pflag"
 
@@ -31,6 +32,7 @@ var (
 	targetYM string // yyyy-mm
 
 	predictedAsMonth bool
+	recommend        bool
 
 	rangeCommitInfraHost         []float64
 	rangeCommitAPMHost           []float64
@@ -83,7 +85,8 @@ func init() {
 	flag.StringVarP(&commitAnalyzedLogs, "commit-analyzed-logs", "", "", "count of commit for analyzed logs")
 	flag.StringVarP(&fpath, "csv", "f", "", "csv file")
 	flag.StringVarP(&targetYM, "yyyymm", "t", "", "yyyy-mm")
-	flag.BoolVarP(&predictedAsMonth, "predicted-as-month", "p", true, "predict as a month even if in the middle of the moon")
+	flag.BoolVarP(&predictedAsMonth, "predicted-as-month", "p", false, "predict as all of month even if in the middle of the month")
+	flag.BoolVarP(&recommend, "recommend", "r", false, "recommend commitment")
 	flag.Parse()
 
 	if fpath == "" {
@@ -94,38 +97,144 @@ func init() {
 		targetYM = time.Now().Format("2006-01")
 	}
 
-	rangeCommitInfraHost = getRange(commitInfraHost)
-	rangeCommitAPMHost = getRange(commitAPMHost)
-	rangeCommitIndexedLogs = getRange(commitIndexedLogs)
-	rangeCommitAnalyzedLogs = getRange(commitAnalyzedLogs)
-	rangeCommitSyntheticsAPITest = getRange(commitSyntheticsAPITest)
-	rangeCommitFargateTask = getRange(commitFargateTask)
-	rangeCommitLambdaFunction = getRange(commitLambdaFunction)
-
 	au = aurora.NewAurora(*colors)
 
 	time.Local = time.FixedZone("Asia/Tokyo", 9*60*60)
 }
 
-func main() {
-	if err := handler(); err != nil {
-		log.Println(err)
-	}
-}
-
-func handler() error {
+func csvRecords(fpath string) (records [][]string, err error) {
 	bytes, err := ioutil.ReadFile(filepath.Clean(fpath))
 	if err != nil {
-		return err
+		return
 	}
 
 	body := string(bytes)
 	r := csv.NewReader(strings.NewReader(body))
 	r.Comma = ','
 
-	records, err := r.ReadAll()
+	records, err = r.ReadAll()
+	return
+}
+
+func setRecommendCommitRange(records [][]string) {
+	readable := false
+	records = records[1:]
+	var lastDay string
+
+	var maxCountHourlyInfraHost float64
+	var maxCountHourlyAPMHost float64
+	var maxFargateTask float64
+	var maxLambdaFunction float64
+	var allIndexedLogs float64
+	var allAnalyzedLogs float64
+	var allSyntheticsAPITest float64
+
+	for _, record := range records {
+		if !strings.HasPrefix(record[1], targetYM) {
+			readable = false
+		}
+
+		if strings.HasPrefix(record[1], targetYM) {
+			readable = true
+		}
+
+		if !readable {
+			continue
+		}
+
+		if lastDay == "" {
+			lastDay = record[1]
+		}
+
+		countHourlyInfraHost, _ := strconv.ParseFloat(record[2], 64)
+		if countHourlyInfraHost > maxCountHourlyInfraHost {
+			maxCountHourlyInfraHost = countHourlyInfraHost
+		}
+
+		countHourlyAPMHost, _ := strconv.ParseFloat(record[3], 64)
+		if countHourlyAPMHost > maxCountHourlyAPMHost {
+			maxCountHourlyAPMHost = countHourlyAPMHost
+		}
+
+		fargateTask, _ := strconv.ParseFloat(record[15], 64)
+		if fargateTask > maxFargateTask {
+			maxFargateTask = fargateTask
+		}
+
+		lambdaFunction, _ := strconv.ParseFloat(record[16], 64)
+		if lambdaFunction > maxLambdaFunction {
+			maxLambdaFunction = lambdaFunction
+		}
+
+		indexedLogs, _ := strconv.ParseFloat(record[11], 64)
+		allIndexedLogs += indexedLogs
+
+		analyzedLogs, _ := strconv.ParseFloat(record[22], 64)
+		allAnalyzedLogs += analyzedLogs
+
+		syntheticsAPITest, _ := strconv.ParseFloat(record[14], 64)
+		allSyntheticsAPITest += syntheticsAPITest
+	}
+
+	log.Debug("maxCountHourlyInfraHost", maxCountHourlyInfraHost)
+	log.Debug("maxCountHourlyAPMHost", maxCountHourlyAPMHost)
+	log.Debug("maxFargateTask", maxFargateTask)
+	log.Debug("maxLambdaFunction", maxLambdaFunction)
+
+	t := allIndexedLogs / 1000_000
+	lastDate, _ := time.Parse("2006-01-02 15:04:05", lastDay)
+	endOfMonth := lastDate.AddDate(0, 1, -lastDate.Day())
+	if predictedAsMonth {
+		t = t * float64(endOfMonth.Day()) / float64(lastDate.Day())
+	}
+	maxAllIndexedLogs := math.Ceil(t)
+	log.Debug("allIndexedLogs", maxAllIndexedLogs)
+
+	t = allAnalyzedLogs / 1000_000_000
+	if predictedAsMonth {
+		t = t * float64(endOfMonth.Day()) / float64(lastDate.Day())
+	}
+	maxAllAnalyzedLogs := math.Ceil(t)
+	log.Debug("allAnalyzedLogs", maxAllAnalyzedLogs)
+
+	t = allSyntheticsAPITest / 10_000
+	if predictedAsMonth {
+		t = t * float64(endOfMonth.Day()) / float64(lastDate.Day())
+	}
+	maxAllSyntheticsAPITest := math.Ceil(t)
+	log.Debug("allSyntheticsAPITest", maxAllSyntheticsAPITest)
+
+	rangeCommitInfraHost = getRange(fmt.Sprintf("0-%f", maxCountHourlyInfraHost))
+	rangeCommitAPMHost = getRange(fmt.Sprintf("0-%f", maxCountHourlyAPMHost))
+	rangeCommitIndexedLogs = getRange(fmt.Sprintf("0-%f", maxAllIndexedLogs))
+	rangeCommitAnalyzedLogs = getRange(fmt.Sprintf("0-%f", maxAllAnalyzedLogs))
+	rangeCommitSyntheticsAPITest = getRange(fmt.Sprintf("0-%f", maxAllSyntheticsAPITest))
+	rangeCommitFargateTask = getRange(fmt.Sprintf("0-%f", maxFargateTask))
+	rangeCommitLambdaFunction = getRange(fmt.Sprintf("0-%f", maxLambdaFunction))
+}
+
+func main() {
+	if err := handler(); err != nil {
+		log.Warn(err)
+	}
+}
+
+func handler() error {
+	records, err := csvRecords(fpath)
 	if err != nil {
-		log.Fatal(err)
+		return err
+	}
+
+	if recommend {
+		setRecommendCommitRange(records)
+	} else {
+		rangeCommitInfraHost = getRange(commitInfraHost)
+		rangeCommitAPMHost = getRange(commitAPMHost)
+		rangeCommitIndexedLogs = getRange(commitIndexedLogs)
+		rangeCommitAnalyzedLogs = getRange(commitAnalyzedLogs)
+		rangeCommitSyntheticsAPITest = getRange(commitSyntheticsAPITest)
+		rangeCommitFargateTask = getRange(commitFargateTask)
+		rangeCommitLambdaFunction = getRange(commitLambdaFunction)
 	}
 
 	totalExcessHoursInfraHost := make([]float64, len(rangeCommitInfraHost))
@@ -200,13 +309,13 @@ func handler() error {
 	}
 	minIndexInfraHost, _ := min(totalPriceInfraHost)
 
-	fmt.Println("\nQYT\tInfra Host")
+	log.Debug("\nQYT\tInfra Host")
 	for i, commit := range rangeCommitInfraHost {
 		d := fmt.Sprintf("%v\t%v", commit, totalPriceInfraHost[i])
 		if i == minIndexInfraHost {
-			fmt.Println(au.Green(d))
+			log.Debug(au.Green(d))
 		} else {
-			fmt.Println(d)
+			log.Debug(d)
 		}
 	}
 	// AgentHost --- end ---
@@ -220,13 +329,13 @@ func handler() error {
 	}
 	minIndexAPMHost, _ := min(totalPriceAPMHost)
 
-	fmt.Println("\nQYT\tAPMHost")
+	log.Debug("\nQYT\tAPMHost")
 	for i, commit := range rangeCommitAPMHost {
 		d := fmt.Sprintf("%v\t%v", commit, totalPriceAPMHost[i])
 		if i == minIndexAPMHost {
-			fmt.Println(au.Green(d))
+			log.Debug(au.Green(d))
 		} else {
-			fmt.Println(d)
+			log.Debug(d)
 		}
 	}
 	// APMHost --- end ---
@@ -245,13 +354,13 @@ func handler() error {
 	}
 	minIndexFargateTask, _ := min(totalPriceFargateTask)
 
-	fmt.Println("\nQYT\tFargate Task")
+	log.Debug("\nQYT\tFargate Task")
 	for i, commit := range rangeCommitFargateTask {
 		d := fmt.Sprintf("%v\t%v", commit, totalPriceFargateTask[i])
 		if i == minIndexFargateTask {
-			fmt.Println(au.Green(d))
+			log.Debug(au.Green(d))
 		} else {
-			fmt.Println(d)
+			log.Debug(d)
 		}
 	}
 	// Fargate Task --- end ---
@@ -270,13 +379,13 @@ func handler() error {
 	}
 	minIndexLambdaFunction, _ := min(totalPriceLambdaFunction)
 
-	fmt.Println("\nQYT\tLambda Function")
+	log.Debug("\nQYT\tLambda Function")
 	for i, commit := range rangeCommitLambdaFunction {
 		d := fmt.Sprintf("%v\t%v", commit, totalPriceLambdaFunction[i])
 		if i == minIndexLambdaFunction {
-			fmt.Println(au.Green(d))
+			log.Debug(au.Green(d))
 		} else {
-			fmt.Println(d)
+			log.Debug(d)
 		}
 	}
 	// Lambda Function --- end ---
@@ -298,13 +407,13 @@ func handler() error {
 	}
 	minIndexIndexedLogs, _ := min(totalPriceIndexedLogs)
 
-	fmt.Println("\nQYT\tIndexed Logs")
+	log.Debug("\nQYT\tIndexed Logs")
 	for i, commit := range rangeCommitIndexedLogs {
 		d := fmt.Sprintf("%v\t%v", commit, totalPriceIndexedLogs[i])
 		if i == minIndexIndexedLogs {
-			fmt.Println(au.Green(d))
+			log.Debug(au.Green(d))
 		} else {
-			fmt.Println(d)
+			log.Debug(d)
 		}
 	}
 	// Indexed Logs --- end ---
@@ -326,13 +435,13 @@ func handler() error {
 	}
 	minIndexAnalyzedLogs, _ := min(totalPriceAnalyzedLogs)
 
-	fmt.Println("\nQYT\tAnalyzed Logs")
+	log.Debug("\nQYT\tAnalyzed Logs")
 	for i, commit := range rangeCommitAnalyzedLogs {
 		d := fmt.Sprintf("%v\t%v", commit, totalPriceAnalyzedLogs[i])
 		if i == minIndexAnalyzedLogs {
-			fmt.Println(au.Green(d))
+			log.Debug(au.Green(d))
 		} else {
-			fmt.Println(d)
+			log.Debug(d)
 		}
 	}
 	// Analyzed Logs --- end ---
@@ -354,13 +463,13 @@ func handler() error {
 	}
 	minIndexSynthetics, _ := min(totalSyntheticsAPITest)
 
-	fmt.Println("\nQYT\tSynthetics API Test")
+	log.Debug("\nQYT\tSynthetics API Test")
 	for i, commit := range rangeCommitSyntheticsAPITest {
 		d := fmt.Sprintf("%v\t%v", commit, totalSyntheticsAPITest[i])
 		if i == minIndexSynthetics {
-			fmt.Println(au.Green(d))
+			log.Debug(au.Green(d))
 		} else {
-			fmt.Println(d)
+			log.Debug(d)
 		}
 	}
 	// Synthetics --- end ---
@@ -409,7 +518,7 @@ func handler() error {
 	for _, v := range data {
 		table.Append(v)
 	}
-	fmt.Printf("\n%v\n", targetYM)
+	fmt.Printf("\n%s\n", targetYM)
 	table.Render()
 
 	return nil
