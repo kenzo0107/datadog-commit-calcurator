@@ -12,7 +12,7 @@ And execute the below command:
 ```
 go run ./main.go \
     --csv ~/Downloads/hourly_usage_extract_2020-07-27.csv \
-    --yyyymm 2020-08 \             # target year and month
+    --yyyymm 2020-10 \             # target year and month
     --commit-infrahost 60-80 \     # commit of Infrastructure Host (range)
     --commit-apmhost 5-10,20 \      # commit of APM Host (range)
     --commit-synthetics 10-30       # commit of synthetics (range)
@@ -23,6 +23,35 @@ go run ./main.go \
 ```
 
 ![](https://i.imgur.com/H5erEwQ.png)
+
+## サンプル
+
+2020-09-23 に 1年分の使用状況 (Usage) CSV をダウンロードし読み取り計算する。
+
+```
+go run ./main.go \
+    --csv ~/Downloads/hourly_usage_extract_2020-10-26.csv \
+    --commit-infrahost 50-100 \
+    --commit-apmhost 5-10 \
+    --commit-fargate-task 130-200 \
+    --commit-lambda-function 13-30 \
+    --commit-indexed-logs 10-45 \
+    --commit-analyzed-logs 0-35 \
+    --commit-synthetics-apitest 30-50 \
+    --predicted-as-month=true
+```
+
++---------------------+--------+----------------+
+|       SERVICE       | COMMIT | TOTAL COST ($) |
++---------------------+--------+----------------+
+| Infra Host          |     91 |        1278.99 |
+| APM Host            |      8 |         286.09 |
+| Fargate Task        |    150 |         180.04 |
+| Lambda Function     |     17 |         104.91 |
+| Indexed Logs        |     37 |          75.48 |
+| Analyzed Logs       |      0 |           0.00 |
+| Synthetics API Test |     35 |         213.75 |
++---------------------+--------+----------------+
 
 ## TODO
 

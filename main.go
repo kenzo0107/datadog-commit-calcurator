@@ -30,6 +30,8 @@ var (
 
 	targetYM string // yyyy-mm
 
+	predictedAsMonth bool
+
 	rangeCommitInfraHost         []float64
 	rangeCommitAPMHost           []float64
 	rangeCommitIndexedLogs       []float64
@@ -81,6 +83,7 @@ func init() {
 	flag.StringVarP(&commitAnalyzedLogs, "commit-analyzed-logs", "", "", "count of commit for analyzed logs")
 	flag.StringVarP(&fpath, "csv", "f", "", "csv file")
 	flag.StringVarP(&targetYM, "yyyymm", "t", "", "yyyy-mm")
+	flag.BoolVarP(&predictedAsMonth, "predicted-as-month", "p", true, "predict as a month even if in the middle of the moon")
 	flag.Parse()
 
 	if fpath == "" {
@@ -281,7 +284,11 @@ func handler() error {
 	// Indexed Logs --- start ---
 	totalPriceIndexedLogs := make([]float64, len(rangeCommitIndexedLogs))
 	for i, commit := range rangeCommitIndexedLogs {
-		excess := allIndexedLogs/1000_000*float64(endOfMonth.Day())/float64(lastDate.Day()) - commit
+		t := allIndexedLogs / 1000_000
+		if predictedAsMonth {
+			t = t * float64(endOfMonth.Day()) / float64(lastDate.Day())
+		}
+		excess := t - commit
 		if excess < 0 {
 			excess = 0
 		}
@@ -305,7 +312,11 @@ func handler() error {
 	// Analyzed Logs --- start ---
 	totalPriceAnalyzedLogs := make([]float64, len(rangeCommitAnalyzedLogs))
 	for i, commit := range rangeCommitAnalyzedLogs {
-		excess := allAnalyzedLogs/1000_000_000*float64(endOfMonth.Day())/float64(lastDate.Day()) - commit
+		t := allAnalyzedLogs / 1000_000_000
+		if predictedAsMonth {
+			t = t * float64(endOfMonth.Day()) / float64(lastDate.Day())
+		}
+		excess := t - commit
 		if excess < 0 {
 			excess = 0
 		}
@@ -329,7 +340,11 @@ func handler() error {
 	// Synthetics --- start ---
 	totalSyntheticsAPITest := make([]float64, len(rangeCommitSyntheticsAPITest))
 	for i, commit := range rangeCommitSyntheticsAPITest {
-		excess := allSyntheticsAPITest/10_000*float64(endOfMonth.Day())/float64(lastDate.Day()) - commit
+		t := allSyntheticsAPITest / 10_000
+		if predictedAsMonth {
+			t = t * float64(endOfMonth.Day()) / float64(lastDate.Day())
+		}
+		excess := t - commit
 		if excess < 0 {
 			excess = 0
 		}
