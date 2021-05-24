@@ -156,7 +156,9 @@ func setRecommendCommitRange(records [][]string) {
 			maxCountHourlyAPMHost = countHourlyAPMHost
 		}
 
+		// Fargate のタスク数を CSV 指定列から取得
 		fargateTask, _ := strconv.ParseFloat(record[15], 64)
+		// Fargate タスク数の最大値を更新
 		if fargateTask > maxFargateTask {
 			maxFargateTask = fargateTask
 		}
@@ -182,13 +184,18 @@ func setRecommendCommitRange(records [][]string) {
 	log.Debug("maxLambdaFunction", maxLambdaFunction)
 
 	t := allIndexedLogs / 1000_000
-	lastDate, _ := time.Parse("2006-01-02 15:04:05", lastDay)
+
+	// time.Parse でパースできる様にする
+	lastDay = strings.Replace(lastDay, "T", " ", 1)
+	l := fmt.Sprintf("%s:00:00", lastDay)
+	lastDate, _ := time.Parse("2006-01-02 15:04:05", l)
+	// 対象月の最終日時 ex: 2021-05-31 23:00:00 +0000 UTC
 	endOfMonth := lastDate.AddDate(0, 1, -lastDate.Day())
+
 	if predictedAsMonth {
 		t = t * float64(endOfMonth.Day()) / float64(lastDate.Day())
 	}
 	maxAllIndexedLogs := math.Ceil(t)
-	log.Debug("allIndexedLogs", maxAllIndexedLogs)
 
 	t = allAnalyzedLogs / 1000_000_000
 	if predictedAsMonth {
@@ -297,7 +304,11 @@ func handler() error {
 		allSyntheticsAPITest += syntheticsAPITest
 	}
 
-	lastDate, _ := time.Parse("2006-01-02 15:04:05", lastDay)
+	// time.Parse する為に整形する
+	lastDay = strings.Replace(lastDay, "T", " ", 1)
+	l := fmt.Sprintf("%s:00:00", lastDay)
+	lastDate, _ := time.Parse("2006-01-02 15:04:05", l)
+	// 対象月の最終日時 ex: 2021-05-31 23:00:00 +0000 UTC
 	endOfMonth := lastDate.AddDate(0, 1, -lastDate.Day())
 
 	// InfraHost --- start ---
