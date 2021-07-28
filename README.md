@@ -48,7 +48,6 @@ go run ./main.go \
     --commit-analyzed-logs 0-35 \
     --commit-synthetics-apitest 30-50 \
     --predicted-as-month=true
-```
 
 +---------------------+--------+----------------+
 |       SERVICE       | COMMIT | TOTAL COST ($) |
@@ -61,6 +60,7 @@ go run ./main.go \
 | Analyzed Logs       |      0 |           0.00 |
 | Synthetics API Test |     35 |         213.75 |
 +---------------------+--------+----------------+
+```
 
 ## TODO
 
